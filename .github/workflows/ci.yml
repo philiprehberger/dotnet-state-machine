@@ -17,6 +17,7 @@ jobs:
           dotnet-version: '8.0.x'
       - run: dotnet restore src/Philiprehberger.StateMachine.csproj
       - run: dotnet build src/Philiprehberger.StateMachine.csproj --configuration Release --no-restore
+      - run: dotnet test tests/Philiprehberger.StateMachine.Tests/Philiprehberger.StateMachine.Tests.csproj --configuration Release --no-restore
 
   publish:
     needs: build

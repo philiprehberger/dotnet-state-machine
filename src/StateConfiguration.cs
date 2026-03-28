@@ -16,6 +16,8 @@ public sealed class StateConfiguration<TState, TTrigger>
     internal Action? ExitAction;
     internal Func<Task>? EntryAsyncAction;
     internal Func<Task>? ExitAsyncAction;
+    internal TState? ParentState;
+    internal bool HasParent;
 
     internal StateConfiguration(StateMachineBuilder<TState, TTrigger> builder, TState state)
     {
@@ -90,6 +92,19 @@ public sealed class StateConfiguration<TState, TTrigger>
     public StateConfiguration<TState, TTrigger> OnExitAsync(Func<Task> func)
     {
         ExitAsyncAction = func;
+        return this;
+    }
+
+    /// <summary>
+    /// Declares this state as a substate of the specified parent state.
+    /// Substates inherit all transitions defined on their parent.
+    /// </summary>
+    /// <param name="parentState">The parent state.</param>
+    /// <returns>This configuration for chaining.</returns>
+    public StateConfiguration<TState, TTrigger> SubstateOf(TState parentState)
+    {
+        ParentState = parentState;
+        HasParent = true;
         return this;
     }
 

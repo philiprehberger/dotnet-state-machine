@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 (2026-03-27)
+
+- Add entry and exit actions on states (sync and async)
+- Add transition history tracking with configurable depth
+- Add hierarchical substates with inherited transitions
+- Add state machine serialization and restoration from snapshots
+
 ## 0.1.0 (2026-03-22)
 
 - Initial release

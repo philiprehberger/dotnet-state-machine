@@ -10,6 +10,7 @@ public sealed class StateMachineBuilder<TState, TTrigger>
     where TTrigger : notnull
 {
     internal readonly Dictionary<TState, StateConfiguration<TState, TTrigger>> Configurations = [];
+    private int _maxHistorySize = 100;
 
     /// <summary>
     /// Begins configuring the specified state.
@@ -29,12 +30,24 @@ public sealed class StateMachineBuilder<TState, TTrigger>
     }
 
     /// <summary>
+    /// Sets the maximum number of transition history entries to retain.
+    /// When exceeded, the oldest entries are dropped. Defaults to 100.
+    /// </summary>
+    /// <param name="maxSize">The maximum number of history entries.</param>
+    /// <returns>This builder for chaining.</returns>
+    public StateMachineBuilder<TState, TTrigger> WithMaxHistorySize(int maxSize)
+    {
+        _maxHistorySize = maxSize;
+        return this;
+    }
+
+    /// <summary>
     /// Builds the state machine with the specified initial state.
     /// </summary>
     /// <param name="initialState">The initial state of the machine.</param>
     /// <returns>A fully configured <see cref="StateMachine{TState, TTrigger}"/>.</returns>
     public StateMachine<TState, TTrigger> Build(TState initialState)
     {
-        return new StateMachine<TState, TTrigger>(initialState, Configurations);
+        return new StateMachine<TState, TTrigger>(initialState, Configurations, _maxHistorySize);
     }
 }
