@@ -8,7 +8,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>Philiprehberger.StateMachine</PackageId>
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <Authors>Philip Rehberger</Authors>
     <Description>Lightweight finite state machine with fluent configuration, guard conditions, and async transition support.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
