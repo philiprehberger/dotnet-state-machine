@@ -12,6 +12,8 @@ public sealed class StateConfiguration<TState, TTrigger>
     private readonly StateMachineBuilder<TState, TTrigger> _builder;
     private readonly TState _state;
     internal readonly List<TransitionRule<TState, TTrigger>> Transitions = [];
+    internal readonly List<TimeoutTransition<TState, TTrigger>> TimeoutTransitions = [];
+    internal readonly Dictionary<TTrigger, Action<object>> ParameterizedEntryActions = [];
     internal Action? EntryAction;
     internal Action? ExitAction;
     internal Func<Task>? EntryAsyncAction;
@@ -52,6 +54,21 @@ public sealed class StateConfiguration<TState, TTrigger>
     }
 
     /// <summary>
+    /// Permits a transition that fires automatically after the specified timeout
+    /// if the machine remains in this state. The timeout starts when the state is entered.
+    /// </summary>
+    /// <param name="trigger">The trigger to auto-fire after the timeout.</param>
+    /// <param name="targetState">The state to transition to.</param>
+    /// <param name="timeout">The duration to wait before auto-firing the trigger.</param>
+    /// <returns>This configuration for chaining.</returns>
+    public StateConfiguration<TState, TTrigger> PermitAfter(TTrigger trigger, TState targetState, TimeSpan timeout)
+    {
+        Transitions.Add(new TransitionRule<TState, TTrigger>(trigger, targetState, guard: null));
+        TimeoutTransitions.Add(new TimeoutTransition<TState, TTrigger>(trigger, targetState, timeout));
+        return this;
+    }
+
+    /// <summary>
     /// Registers an action to execute when entering this state.
     /// </summary>
     /// <param name="action">The action to execute on entry.</param>
@@ -59,6 +76,20 @@ public sealed class StateConfiguration<TState, TTrigger>
     public StateConfiguration<TState, TTrigger> OnEntry(Action action)
     {
         EntryAction = action;
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a parameterized action to execute when entering this state via a trigger
+    /// that carries data of type <typeparamref name="TArg"/>.
+    /// </summary>
+    /// <typeparam name="TArg">The type of the argument passed with the trigger.</typeparam>
+    /// <param name="trigger">The trigger that carries the argument.</param>
+    /// <param name="action">The action to execute on entry, receiving the trigger argument.</param>
+    /// <returns>This configuration for chaining.</returns>
+    public StateConfiguration<TState, TTrigger> OnEntry<TArg>(TTrigger trigger, Action<TArg> action)
+    {
+        ParameterizedEntryActions[trigger] = arg => action((TArg)arg);
         return this;
     }
 
@@ -167,4 +198,9 @@ internal sealed class TransitionRule<TState, TTrigger>
     /// Returns <c>true</c> if the guard condition is met or no guard is set.
     /// </summary>
     internal bool IsPermitted => Guard is null || Guard();
+
+    /// <summary>
+    /// Gets a description of the guard condition, if any.
+    /// </summary>
+    internal string? GuardDescription { get; init; }
 }

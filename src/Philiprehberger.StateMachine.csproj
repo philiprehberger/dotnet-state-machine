@@ -8,9 +8,9 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>Philiprehberger.StateMachine</PackageId>
-    <Version>0.2.1</Version>
+    <Version>0.3.0</Version>
     <Authors>Philip Rehberger</Authors>
-    <Description>Lightweight finite state machine with fluent configuration, guard conditions, and async transition support.</Description>
+    <Description>Lightweight finite state machine with fluent configuration, guard conditions, async transitions, parameterized triggers, timeout transitions, and graph visualization.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>state-machine;fsm;workflow;state;transition</PackageTags>

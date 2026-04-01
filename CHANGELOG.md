@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 (2026-04-01)
+
+- Add DOT and Mermaid diagram export via ToDot() and ToMermaid()
+- Add timeout transitions via PermitAfter that auto-fire after a duration
+- Add parameterized triggers via Fire<TArg> and OnEntry<TArg> for data-carrying transitions
+
 ## 0.2.1 (2026-03-31)
 
 - Standardize README to 3-badge format with emoji Support section

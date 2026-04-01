@@ -1,8 +1,11 @@
+using System.Text;
+
 namespace Philiprehberger.StateMachine;
 
 /// <summary>
 /// A lightweight finite state machine with support for guard conditions, async transitions,
-/// transition history, hierarchical substates, and serialization.
+/// transition history, hierarchical substates, parameterized triggers, timeout transitions,
+/// and serialization.
 /// </summary>
 /// <typeparam name="TState">The state type (typically an enum).</typeparam>
 /// <typeparam name="TTrigger">The trigger type (typically an enum).</typeparam>
@@ -13,6 +16,7 @@ public sealed class StateMachine<TState, TTrigger>
     private readonly Dictionary<TState, StateConfiguration<TState, TTrigger>> _configurations;
     private readonly List<TransitionRecord<TState, TTrigger>> _history = [];
     private readonly int _maxHistorySize;
+    private readonly Dictionary<TState, CancellationTokenSource> _activeTimeouts = [];
     private TState _currentState;
 
     internal StateMachine(
@@ -23,6 +27,8 @@ public sealed class StateMachine<TState, TTrigger>
         _currentState = initialState;
         _configurations = configurations;
         _maxHistorySize = maxHistorySize;
+
+        StartTimeoutsForState(initialState);
     }
 
     /// <summary>
@@ -83,9 +89,35 @@ public sealed class StateMachine<TState, TTrigger>
         var previousState = _currentState;
         var targetState = rule.TargetState;
 
+        CancelTimeoutsForState(previousState);
         ExecuteExitActions(previousState);
         _currentState = targetState;
         ExecuteEntryActions(targetState);
+        StartTimeoutsForState(targetState);
+
+        RecordTransition(previousState, targetState, trigger);
+    }
+
+    /// <summary>
+    /// Fires a trigger with an argument, transitioning the machine to a new state.
+    /// If the target state has a parameterized entry action registered for this trigger,
+    /// it receives the argument.
+    /// </summary>
+    /// <typeparam name="TArg">The type of the argument.</typeparam>
+    /// <param name="trigger">The trigger to fire.</param>
+    /// <param name="arg">The argument to pass to the parameterized entry action.</param>
+    /// <exception cref="InvalidTransitionException">Thrown when no valid transition exists.</exception>
+    public void Fire<TArg>(TTrigger trigger, TArg arg)
+    {
+        var rule = FindTransitionRule(trigger);
+        var previousState = _currentState;
+        var targetState = rule.TargetState;
+
+        CancelTimeoutsForState(previousState);
+        ExecuteExitActions(previousState);
+        _currentState = targetState;
+        ExecuteEntryActions(targetState, trigger, arg);
+        StartTimeoutsForState(targetState);
 
         RecordTransition(previousState, targetState, trigger);
     }
@@ -103,9 +135,44 @@ public sealed class StateMachine<TState, TTrigger>
         var previousState = _currentState;
         var targetState = rule.TargetState;
 
+        CancelTimeoutsForState(previousState);
         await ExecuteExitActionsAsync(previousState).ConfigureAwait(false);
         _currentState = targetState;
         await ExecuteEntryActionsAsync(targetState).ConfigureAwait(false);
+        StartTimeoutsForState(targetState);
+
+        RecordTransition(previousState, targetState, trigger);
+    }
+
+    /// <summary>
+    /// Fires a trigger with an argument asynchronously, transitioning the machine to a new state.
+    /// If the target state has a parameterized entry action registered for this trigger,
+    /// it receives the argument.
+    /// </summary>
+    /// <typeparam name="TArg">The type of the argument.</typeparam>
+    /// <param name="trigger">The trigger to fire.</param>
+    /// <param name="arg">The argument to pass to the parameterized entry action.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="InvalidTransitionException">Thrown when no valid transition exists.</exception>
+    public async Task FireAsync<TArg>(TTrigger trigger, TArg arg)
+    {
+        var rule = FindTransitionRule(trigger);
+        var previousState = _currentState;
+        var targetState = rule.TargetState;
+
+        CancelTimeoutsForState(previousState);
+        await ExecuteExitActionsAsync(previousState).ConfigureAwait(false);
+        _currentState = targetState;
+        ExecuteParameterizedEntryAction(targetState, trigger, arg);
+        if (_configurations.TryGetValue(targetState, out var config))
+        {
+            config.EntryAction?.Invoke();
+            if (config.EntryAsyncAction is not null)
+            {
+                await config.EntryAsyncAction().ConfigureAwait(false);
+            }
+        }
+        StartTimeoutsForState(targetState);
 
         RecordTransition(previousState, targetState, trigger);
     }
@@ -193,6 +260,103 @@ public sealed class StateMachine<TState, TTrigger>
         return machine;
     }
 
+    /// <summary>
+    /// Generates a DOT (Graphviz) representation of the state machine graph,
+    /// showing all configured states, transitions, and guard conditions.
+    /// </summary>
+    /// <returns>A string containing the DOT graph definition.</returns>
+    public string ToDot()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("digraph StateMachine {");
+        sb.AppendLine("    rankdir=LR;");
+        sb.AppendLine("    node [shape=rectangle, style=rounded];");
+
+        // Highlight current state
+        sb.AppendLine($"    \"{_currentState}\" [style=\"rounded,filled\", fillcolor=lightblue];");
+
+        foreach (var (state, config) in _configurations)
+        {
+            // Ensure the state node exists
+            if (!EqualityComparer<TState>.Default.Equals(state, _currentState))
+            {
+                sb.AppendLine($"    \"{state}\";");
+            }
+
+            // Draw substate relationship
+            if (config.HasParent)
+            {
+                sb.AppendLine($"    \"{state}\" -> \"{config.ParentState}\" [style=dashed, label=\"substate of\"];");
+            }
+
+            // Draw transitions
+            foreach (var transition in config.Transitions)
+            {
+                var label = transition.Guard is not null
+                    ? $"{transition.Trigger} [guarded]"
+                    : $"{transition.Trigger}";
+
+                // Check if this is a timeout transition
+                var timeoutTrans = config.TimeoutTransitions
+                    .FirstOrDefault(t => EqualityComparer<TTrigger>.Default.Equals(t.Trigger, transition.Trigger));
+                if (timeoutTrans is not null)
+                {
+                    label += $" (after {timeoutTrans.Timeout.TotalSeconds}s)";
+                }
+
+                sb.AppendLine($"    \"{state}\" -> \"{transition.TargetState}\" [label=\"{label}\"];");
+            }
+        }
+
+        sb.AppendLine("}");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Generates a Mermaid diagram representation of the state machine graph,
+    /// showing all configured states, transitions, and guard conditions.
+    /// </summary>
+    /// <returns>A string containing the Mermaid diagram definition.</returns>
+    public string ToMermaid()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("stateDiagram-v2");
+
+        foreach (var (state, config) in _configurations)
+        {
+            // Draw substate relationship
+            if (config.HasParent)
+            {
+                sb.AppendLine($"    state \"{config.ParentState}\" {{");
+                sb.AppendLine($"        {state}");
+                sb.AppendLine("    }");
+            }
+
+            // Draw transitions
+            foreach (var transition in config.Transitions)
+            {
+                var label = transition.Guard is not null
+                    ? $"{transition.Trigger} [guarded]"
+                    : $"{transition.Trigger}";
+
+                // Check if this is a timeout transition
+                var timeoutTrans = config.TimeoutTransitions
+                    .FirstOrDefault(t => EqualityComparer<TTrigger>.Default.Equals(t.Trigger, transition.Trigger));
+                if (timeoutTrans is not null)
+                {
+                    label += $" (after {timeoutTrans.Timeout.TotalSeconds}s)";
+                }
+
+                sb.AppendLine($"    {state} --> {transition.TargetState} : {label}");
+            }
+        }
+
+        // Highlight current state with a note
+        sb.AppendLine($"    note right of {_currentState} : Current state");
+
+        return sb.ToString();
+    }
+
     private void RecordTransition(TState fromState, TState toState, TTrigger trigger)
     {
         _history.Add(new TransitionRecord<TState, TTrigger>(
@@ -268,6 +432,25 @@ public sealed class StateMachine<TState, TTrigger>
         }
     }
 
+    private void ExecuteEntryActions<TArg>(TState state, TTrigger trigger, TArg? arg)
+    {
+        if (_configurations.TryGetValue(state, out var config))
+        {
+            ExecuteParameterizedEntryAction(state, trigger, arg);
+            config.EntryAction?.Invoke();
+        }
+    }
+
+    private void ExecuteParameterizedEntryAction<TArg>(TState state, TTrigger trigger, TArg? arg)
+    {
+        if (_configurations.TryGetValue(state, out var config) &&
+            config.ParameterizedEntryActions.TryGetValue(trigger, out var action) &&
+            arg is not null)
+        {
+            action(arg);
+        }
+    }
+
     private async Task ExecuteExitActionsAsync(TState state)
     {
         if (_configurations.TryGetValue(state, out var config))
@@ -289,6 +472,50 @@ public sealed class StateMachine<TState, TTrigger>
             {
                 await config.EntryAsyncAction().ConfigureAwait(false);
             }
+        }
+    }
+
+    private void StartTimeoutsForState(TState state)
+    {
+        if (!_configurations.TryGetValue(state, out var config))
+        {
+            return;
+        }
+
+        foreach (var timeout in config.TimeoutTransitions)
+        {
+            var cts = new CancellationTokenSource();
+            _activeTimeouts[state] = cts;
+            var trigger = timeout.Trigger;
+            var delay = timeout.Timeout;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(delay, cts.Token).ConfigureAwait(false);
+
+                    // Only fire if we're still in the same state
+                    if (EqualityComparer<TState>.Default.Equals(_currentState, state))
+                    {
+                        Fire(trigger);
+                    }
+                }
+                catch (TaskCanceledException)
+                {
+                    // Timeout was cancelled because state changed
+                }
+            });
+        }
+    }
+
+    private void CancelTimeoutsForState(TState state)
+    {
+        if (_activeTimeouts.TryGetValue(state, out var cts))
+        {
+            cts.Cancel();
+            cts.Dispose();
+            _activeTimeouts.Remove(state);
         }
     }
 }
